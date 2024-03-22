@@ -143,8 +143,6 @@ def main():
         # bounding_box_set.extend(world.get_level_bbs(carla.CityObjectLabel.TrafficSigns))
         
         edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
-
-
         # while True:
         #     # Retrieve and reshape the image
         #     world.tick()
@@ -198,7 +196,7 @@ def main():
             # frame_path = 'output/%06d' % image.frame
 
             # Save image
-            image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
+            # image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
 
             # (PASCAL VOC format) Initialize the exporter
             # writer = Writer(output_path + '.png', image_w, image_h)
@@ -248,7 +246,6 @@ def main():
                                 
                                 with open(os.path.join(output_path, f"{image.frame}.txt"), "w") as f:
                                     f.write(annotation_str)
-
 
             cv2.imshow('ImageWindowName',img)
 

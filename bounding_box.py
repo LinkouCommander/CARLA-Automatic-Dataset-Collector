@@ -86,6 +86,18 @@ def main():
                 npc.set_autopilot(True)
                 actor_list.append(npc)
 
+        # generate npc vehicle
+        # for i in range(70):
+        #     pedestrian_npc = random.choice(bp_lib.filter('pedestrian'))
+        #     pedestrian_controller = world.get_blueprint_library().find('controller.ai.walker')
+
+        #     npc = world.try_spawn_actor(pedestrian_npc, random.choice(spawn_points))
+        #     # world.wait_for_tick()
+
+        #     controller = world.spawn_actor(pedestrian_controller, carla.Transform(), npc)
+        #     # world.wait_for_tick()
+        #     actor_list.append(npc) 
+
         # spawn camera
         camera_bp = bp_lib.find('sensor.camera.rgb')
         # Set camera blueprint properties
@@ -114,21 +126,21 @@ def main():
         K = build_projection_matrix(image_w, image_h, fov)
 
         # Retrieve all bounding boxes for traffic lights within the level
-        bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
+        # bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
         # Filter the list to extract bounding boxes within a 50m radius
-        nearby_bboxes = []
-        for bbox in bounding_box_set:
-            if bbox.location.distance(camera.get_transform().location) < 50:
-                nearby_bboxes
+        # nearby_bboxes = []
+        # for bbox in bounding_box_set:
+        #     if bbox.location.distance(camera.get_transform().location) < 50:
+        #         nearby_bboxes
         
-        edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
+        # edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
 
         image_count = 0
 
         while True:
             # Retrieve the image
             world.tick()
-            image = sensor_queue.get()
+            image = sensor_queue.get(block = True)
 
             img = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
 
@@ -138,11 +150,13 @@ def main():
             # Save image
             if image_count % 10 == 0:
                 image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
+                open(os.path.join(output_path, f"{image.frame}.txt"), "a")
             # (PASCAL VOC format) Initialize the exporter
             # writer = Writer(output_path + '.png', image_w, image_h)
 
-            annotation_str = ""
+            
             for npc in world.get_actors().filter('*vehicle*'):
+                annotation_str = ""
                 if npc.id != vehicle.id:
                     bb = npc.bounding_box
                     dist = npc.get_transform().location.distance(vehicle.get_transform().location)
@@ -184,12 +198,64 @@ def main():
                                 annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
                                 
                                 if image_count % 10 == 0:
-                                    with open(os.path.join(output_path, f"{image.frame}.txt"), "w") as f:
+                                    with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
                                         f.write(annotation_str)
 
-            # Show image with bounded box
+            bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
+            
+            for bb in bounding_box_set:
+                annotation_str = ""
+                # Filter for distance from ego vehicle
+                if bb.location.distance(vehicle.get_transform().location) < 50:
+
+                    # Calculate the dot product between the forward vector
+                    # of the vehicle and the vector between the vehicle
+                    # and the bounding box. We threshold this dot product
+                    # to limit to drawing bounding boxes IN FRONT OF THE CAMERA
+                    forward_vec = vehicle.get_transform().get_forward_vector()
+                    ray = bb.location - vehicle.get_transform().location
+
+                    if forward_vec.dot(ray) > 1:
+                        # Cycle through the vertices
+                        verts = [v for v in bb.get_world_vertices(carla.Transform())]
+                        x_max = -10000
+                        x_min = 10000
+                        y_max = -10000
+                        y_min = 10000                        
+                        for vert in verts:
+                            # Join the vertices into edges
+                            p = get_image_point(vert, K, world_2_camera)
+                            if p[0] > x_max:
+                                x_max = p[0]
+                            if p[0] < x_min:
+                                x_min = p[0]
+                            if p[1] > y_max:
+                                y_max = p[1]
+                            if p[1] < y_min:
+                                y_min = p[1]
+
+                        # Draw the edges into the camera output
+                        cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+
+                        if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
+                            class_id = 1
+                            x_center = ((x_min + x_max) / 2) / image_w
+                            y_center = ((y_min + y_max) / 2) / image_h
+                            width = (x_max - x_min) / image_w
+                            height = (y_max - y_min) / image_h
+                            annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
+                                
+                        if image_count % 10 == 0:
+                            with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
+                                f.write(annotation_str)
+
+
+            # Show image with bounding box
             cv2.imshow('ImageWindowName',img)
-            # Save image with bounded box
+            # Save image with bounding box
             if image_count % 10 == 0:
                 output_file_path = os.path.join(output_path, f"{image.frame}_b.png")
                 cv2.imwrite(output_file_path, img)
