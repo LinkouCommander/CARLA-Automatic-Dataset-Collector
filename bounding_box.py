@@ -79,11 +79,16 @@ def main():
         actor_list.append(vehicle)
 
         # generate npc vehicle
-        for i in range(150):
+        for i in range(200):
             vehicle_npc = random.choice(bp_lib.filter('vehicle'))
             npc = world.try_spawn_actor(vehicle_npc, random.choice(spawn_points))
+
+            # set light state
+            # light_state = carla.VehicleLightState(carla.VehicleLightState.Special1 | carla.VehicleLightState.Special2)
             if npc:
                 npc.set_autopilot(True)
+                # apply light state
+                # npc.set_light_state(light_state)
                 actor_list.append(npc)
 
         # generate npc vehicle
@@ -136,6 +141,10 @@ def main():
         # edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
 
         image_count = 0
+
+        motorcycle_list = ["vehicle.harley-davidson.low_rider", "vehicle.kawasaki.ninja", "vehicle.vespa.zx125", "vehicle.yamaha.yzf"]
+        bike_list = ["vehicle.bh.crossbike", "vehicle.diamondback.century", "vehicle.gazelle.omafiets"]
+        emergency_list = ["vehicle.dodge.charger_police", "vehicle.dodge.charger_police_2020", "vehicle.carlamotors.firetruck", "vehicle.ford.ambulance"]
 
         while True:
             # Retrieve the image
@@ -190,7 +199,14 @@ def main():
 
                             # Add the object to the frame (ensure it is inside the image)
                             if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
-                                class_id = 0
+                                if npc.type_id in bike_list:
+                                    class_id = 0
+                                elif npc.type_id in motorcycle_list:
+                                    class_id = 1
+                                elif npc.type_id in emergency_list:
+                                    class_id = 2
+                                else:
+                                    class_id = 3
                                 x_center = ((x_min + x_max) / 2) / image_w
                                 y_center = ((y_min + y_max) / 2) / image_h
                                 width = (x_max - x_min) / image_w
@@ -201,6 +217,7 @@ def main():
                                     with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
                                         f.write(annotation_str)
 
+            
             bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
             
             for bb in bounding_box_set:
@@ -241,7 +258,7 @@ def main():
                         cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
 
                         if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
-                            class_id = 1
+                            class_id = 4
                             x_center = ((x_min + x_max) / 2) / image_w
                             y_center = ((y_min + y_max) / 2) / image_h
                             width = (x_max - x_min) / image_w
