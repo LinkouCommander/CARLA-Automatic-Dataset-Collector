@@ -9,6 +9,7 @@ from queue import Queue
 from queue import Empty
 import numpy as np
 # from pascal_voc_writer import Writer
+import bbox_filter as cva
 
 output_path = '../project/image'
 
@@ -60,13 +61,11 @@ def main():
         # Set up the simulator in synchronous mode
         settings = world.get_settings()
         settings.synchronous_mode = True # Enables synchronous mode
-        settings.fixed_delta_seconds = 0.05
+        settings.fixed_delta_seconds = 0.03
         world.apply_settings(settings)
 
         traffic_manager = client.get_trafficmanager()
         traffic_manager.set_synchronous_mode(True)
-
-        sensor_queue = Queue()
 
         # spawn vehicle
         vehicle_bp =bp_lib.find('vehicle.lincoln.mkz_2020')
@@ -79,7 +78,7 @@ def main():
         actor_list.append(vehicle)
 
         # generate npc vehicle
-        for i in range(200):
+        for i in range(70):
             vehicle_npc = random.choice(bp_lib.filter('vehicle'))
             npc = world.try_spawn_actor(vehicle_npc, random.choice(spawn_points))
 
@@ -102,13 +101,20 @@ def main():
         #     controller = world.spawn_actor(pedestrian_controller, carla.Transform(), npc)
         #     # world.wait_for_tick()
         #     actor_list.append(npc) 
+        q_list = []
+        idx = 0
+        tick_queue = Queue()
+        world.on_tick(tick_queue.put)
+        q_list.append(tick_queue)
+        tick_idx = idx
+        idx = idx+1
 
-        # spawn camera
+        ### spawn camera
         camera_bp = bp_lib.find('sensor.camera.rgb')
         # Set camera blueprint properties
         camera_bp.set_attribute('bloom_intensity','1')
         camera_bp.set_attribute('fov','100')
-        camera_bp.set_attribute('slope','0.7')
+        # camera_bp.set_attribute('slope','0.7')
         # camera position related to the vehicle
         camera_init_trans = carla.Transform(carla.Location(x=1.5, z=1.5))
         camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=vehicle)
@@ -117,9 +123,33 @@ def main():
         if not os.path.exists(output_path): 
             os.makedirs(output_path)
         # camera.listen(lambda image: sensor_callback(image, sensor_queue, "camera"))
-        camera.listen(sensor_queue.put) 
+        cam_queue = Queue()
+        camera.listen(cam_queue.put)
         # Create a queue to store and retrieve the sensor data
         sensor_list.append(camera)
+        q_list.append(cam_queue)
+        cam_idx = idx
+        idx = idx+1
+        print('RGB camera ready')
+
+        # Spawn depth camera
+        depth_bp = world.get_blueprint_library().find('sensor.camera.depth')
+        depth_bp.set_attribute('fov','100')
+        # depth_bp.set_attribute('slope','0.7')
+        depth_init_trans = carla.Transform(carla.Location(x=1.5, z=1.5))
+        # depth_bp.set_attribute('sensor_tick', str(tick_sensor))
+        depth = world.spawn_actor(depth_bp, depth_init_trans, attach_to=vehicle)
+        # cc_depth_log = carla.ColorConverter.LogarithmicDepth
+        # nonvehicles_list.append(depth)
+        depth_queue = Queue()
+        depth_color_converter = carla.ColorConverter.LogarithmicDepth
+        depth.listen(depth_queue.put)
+        sensor_list.append(depth)
+        q_list.append(depth_queue)
+        depth_idx = idx
+        idx = idx+1
+        print('Depth camera ready')
+
 
         # Get the world to camera matrix
         world_2_camera = np.array(camera.get_transform().get_inverse_matrix())
@@ -148,8 +178,22 @@ def main():
 
         while True:
             # Retrieve the image
-            world.tick()
-            image = sensor_queue.get(block = True)
+            nowFrame = world.tick()
+
+            data = [cva.retrieve_data(q,nowFrame) for q in q_list]
+            assert all(x.frame == nowFrame for x in data if x is not None)
+
+            # Skip if any sensor data is not available
+            if None in data:
+                continue
+                
+            vehicles_raw = world.get_actors().filter('vehicle.*')
+            snap = data[tick_idx]
+            image = data[cam_idx]
+            depth_image = data[depth_idx]
+
+            # image = cam_queue.get(block = True)
+            # depth_image = depth_queue.get(block = True)
 
             img = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
 
@@ -159,6 +203,7 @@ def main():
             # Save image
             if image_count % 10 == 0:
                 image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
+                depth_image.save_to_disk(os.path.join(output_path, '%06d_d.png' % image.frame), depth_color_converter)
                 open(os.path.join(output_path, f"{image.frame}.txt"), "a")
             # (PASCAL VOC format) Initialize the exporter
             # writer = Writer(output_path + '.png', image_w, image_h)
@@ -189,85 +234,143 @@ def main():
                                 if p[1] < y_min:
                                     y_min = p[1]
 
+                            # filter_occlusion_bbox(dist, verts, )
+                            dist_margin = 10000
+                            for vert in verts:
+                                dist_vert = vehicle.get_transform().location.distance(vert)
+                                dist_margin = min(dist_margin, dist_vert)
+
+                            xc = int((x_max+x_min)/2)
+                            yc = int((y_max+y_min)/2)
+                            wp = int((x_max-x_min) * 0.53/2)
+                            hp = int((y_max-y_min) * 0.53/2)
+                            u1 = xc-wp
+                            u2 = xc+wp
+                            v1 = yc-hp
+                            v2 = yc+hp
+
+                            cv2.line(img, (int(u1),int(v1)), (int(u2),int(v1)), (0,0,0, 255), 1)
+                            cv2.line(img, (int(u1),int(v2)), (int(u2),int(v2)), (0,0,0, 255), 1)
+                            cv2.line(img, (int(u1),int(v1)), (int(u1),int(v2)), (0,0,0, 255), 1)
+                            cv2.line(img, (int(u2),int(v1)), (int(u2),int(v2)), (0,0,0, 255), 1)
+
+                            depth_meter = cva.extract_depth(depth_image)
+                            depth_bb = np.array(depth_meter[v1:v2,u1:u2])
+                            
+                            dist_delta_new = np.full(depth_bb.shape, dist - 10)
+                            # print("depth_bb:", depth_bb)
+                            print("dist_delta_new:", dist_margin)
+                            s_patch = np.array(depth_bb > dist_delta_new)
+                            s = np.sum(s_patch) > s_patch.shape[0]*0.58
+
                             # (PASCAL VOC format) Add the object to the frame (ensure it is inside the image)
                             # if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
                             #     writer.addObject('vehicle', x_min, y_min, x_max, y_max)
-                            cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
-                            cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
-                            cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
-                            cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+                            if s == True:
+                                cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
+                                cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+                                cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
+                                cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
 
-                            # Add the object to the frame (ensure it is inside the image)
-                            if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
-                                if npc.type_id in bike_list:
-                                    class_id = 0
-                                elif npc.type_id in motorcycle_list:
-                                    class_id = 1
-                                elif npc.type_id in emergency_list:
-                                    class_id = 2
-                                else:
-                                    class_id = 3
-                                x_center = ((x_min + x_max) / 2) / image_w
-                                y_center = ((y_min + y_max) / 2) / image_h
-                                width = (x_max - x_min) / image_w
-                                height = (y_max - y_min) / image_h
-                                annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
-                                
-                                if image_count % 10 == 0:
-                                    with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
-                                        f.write(annotation_str)
+                                # Add the object to the frame (ensure it is inside the image)
+                                if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
+                                    if npc.type_id in bike_list:
+                                        class_id = 0
+                                    elif npc.type_id in motorcycle_list:
+                                        class_id = 1
+                                    elif npc.type_id in emergency_list:
+                                        class_id = 2
+                                    else:
+                                        class_id = 3
+                                    x_center = ((x_min + x_max) / 2) / image_w
+                                    y_center = ((y_min + y_max) / 2) / image_h
+                                    width = (x_max - x_min) / image_w
+                                    height = (y_max - y_min) / image_h
+                                    annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
+                                    
+                                    if image_count % 10 == 0:
+                                        with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
+                                            f.write(annotation_str)
 
             
-            bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
+            # bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
             
-            for bb in bounding_box_set:
-                annotation_str = ""
-                # Filter for distance from ego vehicle
-                if bb.location.distance(vehicle.get_transform().location) < 50:
+            # for bb in bounding_box_set:
+            #     annotation_str = ""
+            #     # Filter for distance from ego vehicle
+            #     dist = bb.location.distance(vehicle.get_transform().location)
+            #     if  dist < 50:
 
-                    # Calculate the dot product between the forward vector
-                    # of the vehicle and the vector between the vehicle
-                    # and the bounding box. We threshold this dot product
-                    # to limit to drawing bounding boxes IN FRONT OF THE CAMERA
-                    forward_vec = vehicle.get_transform().get_forward_vector()
-                    ray = bb.location - vehicle.get_transform().location
+            #         # Calculate the dot product between the forward vector
+            #         # of the vehicle and the vector between the vehicle
+            #         # and the bounding box. We threshold this dot product
+            #         # to limit to drawing bounding boxes IN FRONT OF THE CAMERA
+            #         forward_vec = vehicle.get_transform().get_forward_vector()
+            #         ray = bb.location - vehicle.get_transform().location
 
-                    if forward_vec.dot(ray) > 1:
-                        # Cycle through the vertices
-                        verts = [v for v in bb.get_world_vertices(carla.Transform())]
-                        x_max = -10000
-                        x_min = 10000
-                        y_max = -10000
-                        y_min = 10000                        
-                        for vert in verts:
-                            # Join the vertices into edges
-                            p = get_image_point(vert, K, world_2_camera)
-                            if p[0] > x_max:
-                                x_max = p[0]
-                            if p[0] < x_min:
-                                x_min = p[0]
-                            if p[1] > y_max:
-                                y_max = p[1]
-                            if p[1] < y_min:
-                                y_min = p[1]
+            #         if forward_vec.dot(ray) > 1:
+            #             # Cycle through the vertices
+            #             verts = [v for v in bb.get_world_vertices(carla.Transform())]
+            #             x_max = -10000
+            #             x_min = 10000
+            #             y_max = -10000
+            #             y_min = 10000                        
+            #             for vert in verts:
+            #                 # Join the vertices into edges
+            #                 p = get_image_point(vert, K, world_2_camera)
+            #                 if p[0] > x_max:
+            #                     x_max = p[0]
+            #                 if p[0] < x_min:
+            #                     x_min = p[0]
+            #                 if p[1] > y_max:
+            #                     y_max = p[1]
+            #                 if p[1] < y_min:
+            #                     y_min = p[1]
 
-                        # Draw the edges into the camera output
-                        cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
-                        cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
-                        cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
-                        cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+            #             dist_margin = 10000
+            #             for vert in verts:
+            #                 dist_vert = vehicle.get_transform().location.distance(vert)
+            #                 dist_margin = min(dist_margin, dist_vert)
 
-                        if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
-                            class_id = 4
-                            x_center = ((x_min + x_max) / 2) / image_w
-                            y_center = ((y_min + y_max) / 2) / image_h
-                            width = (x_max - x_min) / image_w
-                            height = (y_max - y_min) / image_h
-                            annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
-                                
-                        if image_count % 10 == 0:
-                            with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
-                                f.write(annotation_str)
+            #             xc = int((x_max+x_min)/2)
+            #             yc = int((y_max+y_min)/2)
+            #             wp = int((x_max-x_min) * 0.5/2)
+            #             hp = int((y_max-y_min) * 0.5/2)
+            #             u1 = xc-wp
+            #             u2 = xc+wp
+            #             v1 = yc-hp
+            #             v2 = yc+hp
+
+            #             cv2.line(img, (int(u1),int(v1)), (int(u2),int(v1)), (0,0,0, 255), 1)
+            #             cv2.line(img, (int(u1),int(v2)), (int(u2),int(v2)), (0,0,0, 255), 1)
+            #             cv2.line(img, (int(u1),int(v1)), (int(u1),int(v2)), (0,0,0, 255), 1)
+            #             cv2.line(img, (int(u2),int(v1)), (int(u2),int(v2)), (0,0,0, 255), 1)
+
+            #             depth_meter = cva.extract_depth(depth_image)
+            #             depth_bb = np.array(depth_meter[v1:v2,u1:u2])
+                            
+            #             dist_delta_new = np.full(depth_bb.shape, dist - 1.5)
+            #             s_patch = np.array(depth_bb > dist_delta_new)
+            #             s = np.sum(s_patch) > s_patch.shape[0]*0.64
+
+            #             if s:
+            #                 # Draw the edges into the camera output
+            #                 cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
+            #                 cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+            #                 cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
+            #                 cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+
+            #                 if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
+            #                     class_id = 4
+            #                     x_center = ((x_min + x_max) / 2) / image_w
+            #                     y_center = ((y_min + y_max) / 2) / image_h
+            #                     width = (x_max - x_min) / image_w
+            #                     height = (y_max - y_min) / image_h
+            #                     annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
+                                    
+            #                 if image_count % 10 == 0:
+            #                     with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
+            #                         f.write(annotation_str)
 
 
             # Show image with bounding box
