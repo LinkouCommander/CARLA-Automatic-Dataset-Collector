@@ -8,20 +8,9 @@ import random
 from queue import Queue
 from queue import Empty
 import numpy as np
-from pascal_voc_writer import Writer
+# from pascal_voc_writer import Writer
 
 output_path = '../project/image'
-
-image_count = 0
-
-# save image
-def sensor_callback(sensor_data, sensor_queue, sensor_name):
-    global image_count
-    if 'camera' in sensor_name:
-        if image_count % 10 == 0:
-            sensor_data.save_to_disk(os.path.join(output_path, '%06d.png' % sensor_data.frame))
-        sensor_queue.put((sensor_data.frame, sensor_name))
-        image_count += 1
 
 # project 3D point to 2D
 def build_projection_matrix(w, h, fov):
@@ -90,12 +79,29 @@ def main():
         actor_list.append(vehicle)
 
         # generate npc vehicle
-        for i in range(150):
+        for i in range(200):
             vehicle_npc = random.choice(bp_lib.filter('vehicle'))
             npc = world.try_spawn_actor(vehicle_npc, random.choice(spawn_points))
+
+            # set light state
+            # light_state = carla.VehicleLightState(carla.VehicleLightState.Special1 | carla.VehicleLightState.Special2)
             if npc:
                 npc.set_autopilot(True)
+                # apply light state
+                # npc.set_light_state(light_state)
                 actor_list.append(npc)
+
+        # generate npc vehicle
+        # for i in range(70):
+        #     pedestrian_npc = random.choice(bp_lib.filter('pedestrian'))
+        #     pedestrian_controller = world.get_blueprint_library().find('controller.ai.walker')
+
+        #     npc = world.try_spawn_actor(pedestrian_npc, random.choice(spawn_points))
+        #     # world.wait_for_tick()
+
+        #     controller = world.spawn_actor(pedestrian_controller, carla.Transform(), npc)
+        #     # world.wait_for_tick()
+        #     actor_list.append(npc) 
 
         # spawn camera
         camera_bp = bp_lib.find('sensor.camera.rgb')
@@ -103,8 +109,6 @@ def main():
         camera_bp.set_attribute('bloom_intensity','1')
         camera_bp.set_attribute('fov','100')
         camera_bp.set_attribute('slope','0.7')
-        # camera_bp.set_attribute('shutter_speed','0.00005')
-        # camera_bp.set_attribute('sensor_tick','0.1')
         # camera position related to the vehicle
         camera_init_trans = carla.Transform(carla.Location(x=1.5, z=1.5))
         camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=vehicle)
@@ -126,83 +130,42 @@ def main():
         # Calculate the camera projection matrix to project from 3D -> 2D
         K = build_projection_matrix(image_w, image_h, fov)
 
-        # Get coordinates of object in world coordinate system
-        # camera.bounding_box.get_world_vertices(camera.get_transform())
-
         # Retrieve all bounding boxes for traffic lights within the level
-        bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
+        # bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
         # Filter the list to extract bounding boxes within a 50m radius
-        nearby_bboxes = []
-        for bbox in bounding_box_set:
-            if bbox.location.distance(camera.get_transform().location) < 50:
-                nearby_bboxes
-
-        # Set up the set of bounding boxes from the level
-        # We filter for traffic lights and traffic signs
-        bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
-        # bounding_box_set.extend(world.get_level_bbs(carla.CityObjectLabel.TrafficSigns))
+        # nearby_bboxes = []
+        # for bbox in bounding_box_set:
+        #     if bbox.location.distance(camera.get_transform().location) < 50:
+        #         nearby_bboxes
         
-        edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
-        # while True:
-        #     # Retrieve and reshape the image
-        #     world.tick()
-        #     image = sensor_queue.get()
+        # edges = [[0,1], [1,3], [3,2], [2,0], [0,4], [4,5], [5,1], [5,7], [7,6], [6,4], [6,2], [7,3]]
 
-        #     img = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
+        image_count = 0
 
-        #     # Get the camera matrix 
-        #     world_2_camera = np.array(camera.get_transform().get_inverse_matrix())
+        motorcycle_list = ["vehicle.harley-davidson.low_rider", "vehicle.kawasaki.ninja", "vehicle.vespa.zx125", "vehicle.yamaha.yzf"]
+        bike_list = ["vehicle.bh.crossbike", "vehicle.diamondback.century", "vehicle.gazelle.omafiets"]
+        emergency_list = ["vehicle.dodge.charger_police", "vehicle.dodge.charger_police_2020", "vehicle.carlamotors.firetruck", "vehicle.ford.ambulance"]
 
-        #     for bb in bounding_box_set:
-
-        #         # Filter for distance from ego vehicle
-        #         if bb.location.distance(vehicle.get_transform().location) < 50:
-
-        #             # Calculate the dot product between the forward vector
-        #             # of the vehicle and the vector between the vehicle
-        #             # and the bounding box. We threshold this dot product
-        #             # to limit to drawing bounding boxes IN FRONT OF THE CAMERA
-        #             forward_vec = vehicle.get_transform().get_forward_vector()
-        #             ray = bb.location - vehicle.get_transform().location
-
-        #             if forward_vec.dot(ray) > 1:
-        #                 # Cycle through the vertices
-        #                 verts = [v for v in bb.get_world_vertices(carla.Transform())]
-        #                 for edge in edges:
-        #                     # Join the vertices into edges
-        #                     p1 = get_image_point(verts[edge[0]], K, world_2_camera)
-        #                     p2 = get_image_point(verts[edge[1]],  K, world_2_camera)
-        #                     # Draw the edges into the camera output
-        #                     cv2.line(img, (int(p1[0]),int(p1[1])), (int(p2[0]),int(p2[1])), (0,0,255, 255), 1)
-
-        #     # Now draw the image into the OpenCV display window
-        #     cv2.imshow('ImageWindowName',img)
-        #     # Break the loop if the user presses the Q key
-        #     if cv2.waitKey(1) == ord('q'):
-        #         break
-
-        # # Close the OpenCV display window when the game loop stops
-        # cv2.destroyAllWindows()
         while True:
             # Retrieve the image
             world.tick()
-            image = sensor_queue.get()
+            image = sensor_queue.get(block = True)
 
             img = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
 
             # Get the camera matrix 
             world_2_camera = np.array(camera.get_transform().get_inverse_matrix())
 
-            # frame_path = 'output/%06d' % image.frame
-
             # Save image
-            # image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
-
+            if image_count % 10 == 0:
+                image.save_to_disk(os.path.join(output_path, '%06d.png' % image.frame))
+                open(os.path.join(output_path, f"{image.frame}.txt"), "a")
             # (PASCAL VOC format) Initialize the exporter
             # writer = Writer(output_path + '.png', image_w, image_h)
 
-            annotation_str = ""
+            
             for npc in world.get_actors().filter('*vehicle*'):
+                annotation_str = ""
                 if npc.id != vehicle.id:
                     bb = npc.bounding_box
                     dist = npc.get_transform().location.distance(vehicle.get_transform().location)
@@ -236,24 +199,87 @@ def main():
 
                             # Add the object to the frame (ensure it is inside the image)
                             if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
-                                class_id = 0
-                                # bbox = npc['bounding_box']
+                                if npc.type_id in bike_list:
+                                    class_id = 0
+                                elif npc.type_id in motorcycle_list:
+                                    class_id = 1
+                                elif npc.type_id in emergency_list:
+                                    class_id = 2
+                                else:
+                                    class_id = 3
                                 x_center = ((x_min + x_max) / 2) / image_w
                                 y_center = ((y_min + y_max) / 2) / image_h
                                 width = (x_max - x_min) / image_w
                                 height = (y_max - y_min) / image_h
                                 annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
                                 
-                                with open(os.path.join(output_path, f"{image.frame}.txt"), "w") as f:
-                                    f.write(annotation_str)
+                                if image_count % 10 == 0:
+                                    with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
+                                        f.write(annotation_str)
 
+            
+            bounding_box_set = world.get_level_bbs(carla.CityObjectLabel.TrafficLight)
+            
+            for bb in bounding_box_set:
+                annotation_str = ""
+                # Filter for distance from ego vehicle
+                if bb.location.distance(vehicle.get_transform().location) < 50:
+
+                    # Calculate the dot product between the forward vector
+                    # of the vehicle and the vector between the vehicle
+                    # and the bounding box. We threshold this dot product
+                    # to limit to drawing bounding boxes IN FRONT OF THE CAMERA
+                    forward_vec = vehicle.get_transform().get_forward_vector()
+                    ray = bb.location - vehicle.get_transform().location
+
+                    if forward_vec.dot(ray) > 1:
+                        # Cycle through the vertices
+                        verts = [v for v in bb.get_world_vertices(carla.Transform())]
+                        x_max = -10000
+                        x_min = 10000
+                        y_max = -10000
+                        y_min = 10000                        
+                        for vert in verts:
+                            # Join the vertices into edges
+                            p = get_image_point(vert, K, world_2_camera)
+                            if p[0] > x_max:
+                                x_max = p[0]
+                            if p[0] < x_min:
+                                x_min = p[0]
+                            if p[1] > y_max:
+                                y_max = p[1]
+                            if p[1] < y_min:
+                                y_min = p[1]
+
+                        # Draw the edges into the camera output
+                        cv2.line(img, (int(x_min),int(y_min)), (int(x_max),int(y_min)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_min),int(y_max)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_min),int(y_min)), (int(x_min),int(y_max)), (0,0,255, 255), 1)
+                        cv2.line(img, (int(x_max),int(y_min)), (int(x_max),int(y_max)), (0,0,255, 255), 1)
+
+                        if x_min > 0 and x_max < image_w and y_min > 0 and y_max < image_h: 
+                            class_id = 4
+                            x_center = ((x_min + x_max) / 2) / image_w
+                            y_center = ((y_min + y_max) / 2) / image_h
+                            width = (x_max - x_min) / image_w
+                            height = (y_max - y_min) / image_h
+                            annotation_str += f"{class_id} {x_center} {y_center} {width} {height}\n"
+                                
+                        if image_count % 10 == 0:
+                            with open(os.path.join(output_path, f"{image.frame}.txt"), "a") as f:
+                                f.write(annotation_str)
+
+
+            # Show image with bounding box
             cv2.imshow('ImageWindowName',img)
-
-            # Save image with bounded box
-            # output_file_path = os.path.join(output_path, f"{image.frame}_b.png")
-            # cv2.imwrite(output_file_path, img)
+            # Save image with bounding box
+            if image_count % 10 == 0:
+                output_file_path = os.path.join(output_path, f"{image.frame}_b.png")
+                cv2.imwrite(output_file_path, img)
+            image_count += 1
             if cv2.waitKey(1) == ord('q'):
                 break
+
             # (PASCAL VOC format) Save the bounding boxes in the scene
             # writer.save(os.path.join(output_path, '%06d.xml' % image.frame))
 
