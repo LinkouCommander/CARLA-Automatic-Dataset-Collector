@@ -85,8 +85,8 @@ def main():
 
         # generate npc vehicle
         for i in range(vehicle_num):
-            # vehicle_npc = random.choice(bp_lib.filter('vehicle'))
-            vehicle_npc = bp_lib.find('vehicle.carlamotors.firetruck')
+            vehicle_npc = random.choice(bp_lib.filter('vehicle'))
+            # vehicle_npc = bp_lib.find('vehicle.carlamotors.firetruck')
             npc = world.try_spawn_actor(vehicle_npc, random.choice(spawn_points))
 
             # set light state
@@ -265,7 +265,7 @@ def main():
                             depth_meter = cva.extract_depth(depth_image)
                             depth_bb = np.array(depth_meter[v1:v2+1,u1:u2+1])
                             
-                            dist_delta_new = np.full(depth_bb.shape, dist - 8)
+                            dist_delta_new = np.full(depth_bb.shape, dist - 8.35)
                             # print("depth_bb:", depth_bb)
                             # print("dist_delta_new:", dist_margin)
                             s_patch = np.array(depth_bb > dist_delta_new)
@@ -354,10 +354,10 @@ def main():
                             
                         dist_delta_new = np.full(depth_bb.shape, dist - 10)
                         s_patch = np.array(depth_bb > dist_delta_new)
-                        print("dist", dist - 10)
-                        print("depth_bb: ")
-                        print(depth_bb)
-                        print("u1: ", u1, ", u2: ", u2, ", v1: ", v1, ", v2: ", v2)
+                        # print("dist", dist - 10)
+                        # print("depth_bb: ")
+                        # print(depth_bb)
+                        # print("u1: ", u1, ", u2: ", u2, ", v1: ", v1, ", v2: ", v2)
                         s = np.sum(s_patch) > s_patch.shape[0]*0.1
 
                         if s:
